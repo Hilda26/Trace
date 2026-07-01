@@ -2,6 +2,7 @@
 
 import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
+import type { CalldataEncodable } from "genlayer-js/types";
 import type { SafetyCase, SafetyVerdict, AdminStats, WalletActivity } from "./types";
 
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "") as `0x${string}`;
@@ -92,9 +93,8 @@ async function getWriteClient() {
 
 // ─── Write helper ─────────────────────────────────────────────────────────────
 
-async function write(functionName: string, args: unknown[]): Promise<{ txHash: string; explorerLink: string }> {
+async function write(functionName: string, args: CalldataEncodable[]): Promise<{ txHash: string; explorerLink: string }> {
   const client = await getWriteClient();
-  // @ts-expect-error args typing
   const txHash = await client.writeContract({
     address: CONTRACT_ADDRESS,
     functionName,
@@ -106,8 +106,7 @@ async function write(functionName: string, args: unknown[]): Promise<{ txHash: s
 
 // ─── Read helper ──────────────────────────────────────────────────────────────
 
-async function read(functionName: string, args: unknown[]): Promise<unknown> {
-  // @ts-expect-error args typing
+async function read(functionName: string, args: CalldataEncodable[]): Promise<unknown> {
   return readClient.readContract({ address: CONTRACT_ADDRESS, functionName, args });
 }
 
