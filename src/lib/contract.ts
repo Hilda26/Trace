@@ -73,22 +73,23 @@ export async function getConnectedAddress(): Promise<string | null> {
 // Read client — no wallet needed
 const readClient = createClient({ chain: studionet });
 
-async function getWriteClient() {
+async function getWalletClient() {
   const eth = getEth();
 
-  // 1. Request account access (no-op if already connected)
   const accounts: string[] = await eth.request({ method: "eth_requestAccounts" });
   if (!accounts[0]) throw new Error("No wallet connected");
 
-  // 2. Switch/add StudioNet using standard EIP methods — no Snaps, no plugin
   await ensureStudioNet(eth);
 
-  // 3. Build write client with injected provider
   return createClient({
     chain: studionet,
     account: accounts[0] as `0x${string}`,
     provider: eth,
   });
+}
+
+async function getWriteClient() {
+  return getWalletClient();
 }
 
 // ─── Write helper ─────────────────────────────────────────────────────────────
@@ -108,6 +109,11 @@ async function write(functionName: string, args: CalldataEncodable[]): Promise<{
 
 async function read(functionName: string, args: CalldataEncodable[]): Promise<unknown> {
   return readClient.readContract({ address: CONTRACT_ADDRESS, functionName, args });
+}
+
+async function readAsConnectedWallet(functionName: string, args: CalldataEncodable[]): Promise<unknown> {
+  const client = await getWalletClient();
+  return client.readContract({ address: CONTRACT_ADDRESS, functionName, args });
 }
 
 // ─── Contract write functions ─────────────────────────────────────────────────
@@ -160,18 +166,30 @@ export async function getCase(caseId: string): Promise<SafetyCase | null> {
   try { return JSON.parse(r); } catch { return null; }
 }
 
+export async function getCasePrivate(caseId: string): Promise<SafetyCase | null> {
+  const r = await readAsConnectedWallet("get_case_private", [caseId]) as string;
+  if (!r || r === "{}") return null;
+  try { return JSON.parse(r); } catch { return null; }
+}
+
 export async function getPublicCases(): Promise<SafetyCase[]> {
   const r = await read("get_public_cases", []) as string;
   try { return JSON.parse(r || "[]"); } catch { return []; }
 }
 
-export async function getCasesByOwner(owner: string): Promise<SafetyCase[]> {
-  const r = await read("get_cases_by_owner", [owner]) as string;
+export async function getCasesByOwner(_owner: string): Promise<SafetyCase[]> {
+  const r = await readAsConnectedWallet("get_my_cases", []) as string;
   try { return JSON.parse(r || "[]"); } catch { return []; }
 }
 
 export async function getCaseVerdict(caseId: string): Promise<SafetyVerdict | null> {
   const r = await read("get_case_verdict", [caseId]) as string;
+  if (!r || r === "{}") return null;
+  try { return JSON.parse(r); } catch { return null; }
+}
+
+export async function getCaseVerdictPrivate(caseId: string): Promise<SafetyVerdict | null> {
+  const r = await readAsConnectedWallet("get_case_verdict", [caseId]) as string;
   if (!r || r === "{}") return null;
   try { return JSON.parse(r); } catch { return null; }
 }
@@ -192,8 +210,8 @@ export async function getAdminStats(): Promise<AdminStats | null> {
   try { return JSON.parse(r || "{}"); } catch { return null; }
 }
 
-export async function getReviewNotes(caseId: string, requester: string) {
-  const r = await read("get_review_notes", [caseId, requester]) as string;
+export async function getReviewNotes(caseId: string, _requester?: string) {
+  const r = await readAsConnectedWallet("get_review_notes_for_sender", [caseId]) as string;
   try { return JSON.parse(r || "[]"); } catch { return []; }
 }
 

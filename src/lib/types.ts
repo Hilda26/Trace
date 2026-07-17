@@ -70,6 +70,10 @@ export interface SafetyCase {
   transport_storage_notes: string;
   inspection_notes: string;
   private_evidence_commitment_hash: string;
+  private_evidence_commitment_present?: boolean;
+  evidence_source_count?: number;
+  evidence_sources_authenticated?: boolean;
+  evidence_source_digest?: string;
   visibility_mode: "public" | "private";
   status: CaseStatus;
   created_at: string;
@@ -90,6 +94,9 @@ export interface SafetyVerdict {
   required_action: RequiredAction;
   confidence: number;
   short_reason: string;
+  authenticated_source_count?: number;
+  source_digest?: string;
+  private_evidence_commitment_present?: boolean;
   created_at: string;
 }
 

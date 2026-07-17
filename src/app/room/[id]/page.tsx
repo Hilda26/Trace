@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import Nav from "@/components/Nav";
-import { getCase, getReviewNotes, addReviewNote, getConnectedAddress, requestSafetyVerdict, getCaseVerdict } from "@/lib/contract";
+import { getCasePrivate, getReviewNotes, addReviewNote, getConnectedAddress, requestSafetyVerdict, getCaseVerdictPrivate } from "@/lib/contract";
 import type { SafetyCase, ReviewNote, SafetyVerdict } from "@/lib/types";
 import VerdictChamber from "@/components/VerdictChamber";
 import { TxPanel } from "@/components/ExplorerLink";
@@ -28,7 +28,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
     getConnectedAddress().then(addr => {
       setAddress(addr);
       if (addr) {
-        Promise.all([getCase(id), getReviewNotes(id, addr), getCaseVerdict(id)]).then(([c, n, v]) => {
+        Promise.all([getCasePrivate(id), getReviewNotes(id, addr), getCaseVerdictPrivate(id)]).then(([c, n, v]) => {
           setCase(c); setNotes(n); setVerdict(v); setLoading(false);
         });
       } else {
@@ -76,7 +76,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
       const result = await requestSafetyVerdict(id);
       setTx(result);
       // Refresh case + verdict after tx lands
-      const [updatedCase, updatedVerdict] = await Promise.all([getCase(id), getCaseVerdict(id)]);
+      const [updatedCase, updatedVerdict] = await Promise.all([getCasePrivate(id), getCaseVerdictPrivate(id)]);
       if (updatedCase) setCase(updatedCase);
       if (updatedVerdict) setVerdict(updatedVerdict);
     } catch (e: any) {

@@ -6,6 +6,35 @@ import pytest
 # These tests use the GenLayer test runner (genlayer test).
 # Run: genlayer test contract/tests/
 
+class ContractCallerWrapper:
+    def __init__(self, contract, direct_vm):
+        self._contract = contract
+        self._direct_vm = direct_vm
+
+    def __getattr__(self, name):
+        attr = getattr(self._contract, name)
+        if not callable(attr):
+            return attr
+
+        def call_with_optional_sender(*args, **kwargs):
+            caller = kwargs.pop("caller", None)
+            if caller is None:
+                return attr(*args, **kwargs)
+            with self._direct_vm.prank(caller):
+                return attr(*args, **kwargs)
+
+        return call_with_optional_sender
+
+
+@pytest.fixture
+def contract(direct_deploy, direct_vm):
+    return ContractCallerWrapper(direct_deploy("contract/trace.py"), direct_vm)
+
+
+@pytest.fixture
+def accounts(direct_accounts):
+    return direct_accounts
+
 VALID_CASE = {
     "case_id": "test_case_001",
     "title": "Cold Chain Review — Frozen Salmon Lot 7",
@@ -57,7 +86,7 @@ def test_invalid_review_focus_rejected(contract):
 
 def test_owner_sees_own_cases(contract, accounts):
     contract.submit_case(**{**VALID_CASE, "case_id": "owner_case_1"}, caller=accounts[0])
-    result = json.loads(contract.get_cases_by_owner(str(accounts[0])))
+    result = json.loads(contract.get_cases_by_owner(str(accounts[1]), caller=accounts[0]))
     ids = [c["case_id"] for c in result]
     assert "owner_case_1" in ids
 
@@ -91,7 +120,7 @@ def test_withdraw_case(contract, accounts):
 
 def test_non_owner_cannot_withdraw(contract, accounts):
     contract.submit_case(**{**VALID_CASE, "case_id": "auth_test"}, caller=accounts[0])
-    with pytest.raises(Exception, match="Not case owner"):
+    with pytest.raises(Exception, match="Only case owner"):
         contract.withdraw_case("auth_test", caller=accounts[1])
 
 
@@ -106,3 +135,58 @@ def test_verdict_not_present_initially(contract):
     contract.submit_case(**{**VALID_CASE, "case_id": "no_verdict"})
     result = contract.get_case_verdict("no_verdict")
     assert result == "{}"
+
+
+def test_private_case_requires_actual_sender(contract, accounts):
+    contract.submit_case(**{**VALID_CASE, "case_id": "private_sender", "visibility_mode": "private"}, caller=accounts[0])
+
+    non_owner_view = json.loads(contract.get_case("private_sender", caller=accounts[1]))
+    assert non_owner_view == {}
+
+    owner_view = json.loads(contract.get_case_private("private_sender", caller=accounts[0]))
+    assert owner_view["case_id"] == "private_sender"
+    assert owner_view["owner"] == str(accounts[0]).lower()
+
+
+def test_non_owner_cannot_add_review_note(contract, accounts):
+    contract.submit_case(**{**VALID_CASE, "case_id": "note_auth"}, caller=accounts[0])
+    with pytest.raises(Exception, match="Only case owner"):
+        contract.add_review_note(
+            case_id="note_auth", note_id="n2", note_type="internal",
+            note_summary="Should be rejected", visibility="private",
+            caller=accounts[1],
+        )
+
+
+def test_private_verdict_requires_actual_sender(contract, accounts):
+    contract.submit_case(**{**VALID_CASE, "case_id": "private_verdict", "visibility_mode": "private"}, caller=accounts[0])
+    contract.store_safety_verdict("private_verdict", json.dumps({
+        "safety_status": "hold_required",
+        "risk_tier": "high",
+        "evidence_quality": "strong",
+        "recall_match": "possible_match",
+        "required_action": "quarantine_batch",
+        "confidence": 88,
+        "short_reason": "Retrieved advisory evidence conflicts with owner summary.",
+        "authenticated_source_count": 2,
+        "source_digest": "abc123",
+    }))
+
+    assert contract.get_case_verdict("private_verdict", caller=accounts[1]) == "{}"
+    owner_verdict = json.loads(contract.get_case_verdict("private_verdict", caller=accounts[0]))
+    assert owner_verdict["authenticated_source_count"] == 2
+    assert owner_verdict["source_digest"] == "abc123"
+
+
+def test_submission_records_source_and_private_commitment_metadata(contract):
+    contract.submit_case(**{
+        **VALID_CASE,
+        "case_id": "source_meta",
+        "public_evidence_urls": "https://example.com/evidence/1, https://example.com/evidence/2",
+        "pdf_report_urls": "https://example.com/report.pdf",
+        "recall_or_advisory_urls": "https://example.com/recall",
+        "private_evidence_commitment_hash": "0xabc",
+    })
+    result = json.loads(contract.get_case_private("source_meta"))
+    assert result["evidence_source_count"] == 4
+    assert result["private_evidence_commitment_present"] is True

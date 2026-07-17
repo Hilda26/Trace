@@ -5,7 +5,7 @@ import Nav from "@/components/Nav";
 import { StatusBadge, RiskBadge } from "@/components/StatusBadge";
 import VerdictChamber from "@/components/VerdictChamber";
 import Disclaimer from "@/components/Disclaimer";
-import { getCase, getCaseVerdict, getConnectedAddress, requestSafetyVerdict } from "@/lib/contract";
+import { getCase, getCasePrivate, getCaseVerdict, getCaseVerdictPrivate, getConnectedAddress, requestSafetyVerdict } from "@/lib/contract";
 import type { SafetyCase, SafetyVerdict } from "@/lib/types";
 import { CHAIN_STAGES, FOOD_CATEGORIES, REVIEW_FOCUS_OPTIONS, NETWORK } from "@/lib/constants";
 
@@ -31,9 +31,24 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([getCase(id), getCaseVerdict(id), getConnectedAddress()]).then(([c, v, addr]) => {
-      setCase(c); setVerdict(v); setWalletAddress(addr); setLoading(false);
-    });
+    async function loadCase() {
+      const addr = await getConnectedAddress();
+      const [publicCase, publicVerdict] = await Promise.all([getCase(id), getCaseVerdict(id)]);
+      let resolvedCase = publicCase;
+      let resolvedVerdict = publicVerdict;
+
+      if (addr) {
+        const [privateCase, privateVerdict] = await Promise.all([
+          getCasePrivate(id).catch(() => null),
+          getCaseVerdictPrivate(id).catch(() => null),
+        ]);
+        resolvedCase = privateCase || publicCase;
+        resolvedVerdict = privateVerdict || publicVerdict;
+      }
+
+      setCase(resolvedCase); setVerdict(resolvedVerdict); setWalletAddress(addr); setLoading(false);
+    }
+    loadCase();
   }, [id]);
 
   const isOwner = c && walletAddress && c.owner.toLowerCase() === walletAddress.toLowerCase();
@@ -43,7 +58,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
     try {
       const result = await requestSafetyVerdict(id);
       setTx(result);
-      setTimeout(() => getCaseVerdict(id).then(setVerdict), 3000);
+      setTimeout(() => getCaseVerdictPrivate(id).then(setVerdict).catch(() => getCaseVerdict(id).then(setVerdict)), 3000);
     } catch (e: any) {
       setError(e.message || "Transaction failed");
     } finally {

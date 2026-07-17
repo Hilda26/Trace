@@ -3,6 +3,7 @@
 
 from genlayer import *
 
+import hashlib
 import json
 import typing
 from datetime import datetime, timezone
@@ -136,6 +137,22 @@ class TraceContract(gl.Contract):
             return text[:max_len]
         return text
 
+    def _split_urls(self, raw: str, max_items: int = 6) -> typing.List[str]:
+        if raw is None or raw.strip() == "":
+            return []
+        cleaned = raw.replace("\n", ",").replace("|", ",")
+        urls: typing.List[str] = []
+        for part in cleaned.split(","):
+            url = part.strip()
+            if url == "":
+                continue
+            lower = url.lower()
+            if not (lower.startswith("https://") or lower.startswith("http://")):
+                continue
+            urls.append(url[:500])
+            if len(urls) >= max_items:
+                break
+        return urls
     def _to_int(self, value: typing.Any, fallback: int) -> int:
         try:
             return int(value)
@@ -436,6 +453,7 @@ class TraceContract(gl.Contract):
         return {
             "case_id": case.get("case_id", ""),
             "title": case.get("title", ""),
+            "owner": case.get("owner", ""),
             "food_category": case.get("food_category", ""),
             "chain_stage": case.get("chain_stage", ""),
             "review_focus": case.get("review_focus", ""),
@@ -447,7 +465,16 @@ class TraceContract(gl.Contract):
             "created_at": case.get("created_at", ""),
             "submitted_at": case.get("submitted_at", ""),
             "latest_verdict_id": case.get("latest_verdict_id", ""),
+            "evidence_source_count": case.get("evidence_source_count", 0),
+            "private_evidence_commitment_present": case.get("private_evidence_commitment_present", False),
         }
+
+    def _case_for_sender(self, case: typing.Any) -> typing.Any:
+        if case.get("visibility_mode", "") == "public":
+            return self._build_public_view(case)
+        if case.get("owner", "").lower() == self._sender():
+            return case
+        return {}
 
     # ──────────────────────────────────────────────────────────────────────────
     # Contract status
@@ -524,6 +551,8 @@ class TraceContract(gl.Contract):
 
         sender = self._sender()
         now = _now()
+        source_urls = self._split_urls(public_evidence_urls, 4) + self._split_urls(pdf_report_urls, 4) + self._split_urls(recall_or_advisory_urls, 4)
+        private_commitment = self._limit(private_evidence_commitment_hash, 256)
 
         record = {
             "case_id": final_case_id,
@@ -541,10 +570,14 @@ class TraceContract(gl.Contract):
             "image_urls": self._limit(image_urls, 2400),
             "pdf_report_urls": self._limit(pdf_report_urls, 2400),
             "recall_or_advisory_urls": self._limit(recall_or_advisory_urls, 2400),
+            "evidence_source_count": len(source_urls),
+            "evidence_sources_authenticated": False,
+            "evidence_source_digest": "",
             "temperature_log_summary": self._limit(temperature_log_summary, 1600),
             "transport_storage_notes": self._limit(transport_storage_notes, 1200),
             "inspection_notes": self._limit(inspection_notes, 1200),
-            "private_evidence_commitment_hash": self._limit(private_evidence_commitment_hash, 256),
+            "private_evidence_commitment_hash": private_commitment,
+            "private_evidence_commitment_present": private_commitment.strip() != "",
             "visibility_mode": final_visibility,
             "status": "submitted",
             "created_at": now,
@@ -631,6 +664,7 @@ class TraceContract(gl.Contract):
         self._require_not_paused()
 
         case = self._require_case_exists(case_id)
+        self._require_case_owner(case)
         self._require_non_empty(note_summary, "note_summary")
 
         if case.get("status", "") in ["withdrawn", "archived"]:
@@ -666,11 +700,18 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_review_notes(self, case_id: str, requester: str) -> str:
+        # requester is kept for older clients but is not trusted for access control.
+        return self.get_review_notes_for_sender(case_id)
+
+    @gl.public.view
+    def get_review_notes_for_sender(self, case_id: str) -> str:
         if self.cases.get(case_id, "") == "":
             return "[]"
 
         case = self._load(self.cases.get(case_id, ""))
-        is_owner = case.get("owner", "").lower() == requester.strip().lower()
+        sender = self._sender()
+        is_owner = case.get("owner", "").lower() == sender
+        is_public_case = case.get("visibility_mode", "") == "public"
 
         note_ids_raw = self.case_note_index.get(case_id, "")
         if note_ids_raw == "":
@@ -691,10 +732,7 @@ class TraceContract(gl.Contract):
 
             if is_owner:
                 result.append(note)
-            elif note_visibility == "public":
-                result.append(note)
-            elif note_visibility == "shared" and requester.strip().lower() != "":
-                # Shared notes visible to any authenticated address — reviewer invitation is off-chain in MVP
+            elif is_public_case and note_visibility == "public":
                 result.append(note)
 
         return self._json(result)
@@ -745,27 +783,54 @@ class TraceContract(gl.Contract):
         transport_val     = _cap(case.get("transport_storage_notes", ""), 200)
         inspection_val    = _cap(case.get("inspection_notes", ""), 200)
         notes_text        = "; ".join(shared_notes) if shared_notes else "none"
+        source_urls       = self._split_urls(case.get("public_evidence_urls", ""), 3) + self._split_urls(case.get("pdf_report_urls", ""), 3) + self._split_urls(case.get("recall_or_advisory_urls", ""), 3)
+        private_commitment = case.get("private_evidence_commitment_hash", "")
 
         def evaluate_once() -> str:
+            fetched_sources: typing.List[typing.Any] = []
+            source_text_parts: typing.List[str] = []
+            for url in source_urls[:6]:
+                source_record = {"url": url, "retrieved": False, "excerpt": ""}
+                try:
+                    html = gl.nondet.web.render(url, mode="html")
+                    excerpt = self._limit(str(html).replace("\n", " ").replace("\r", " "), 1200)
+                    source_record = {"url": url, "retrieved": True, "excerpt": excerpt[:500]}
+                    source_text_parts.append("SOURCE " + url + ": " + excerpt)
+                except Exception as err:
+                    source_record = {"url": url, "retrieved": False, "excerpt": "EXTERNAL_FETCH_ERROR: " + self._limit(str(err), 160)}
+                fetched_sources.append(source_record)
+
+            evidence_text = "\n".join(source_text_parts) if source_text_parts else "no public sources retrieved"
+            digest_basis = json.dumps(fetched_sources, sort_keys=True)
+            source_digest = hashlib.sha256(digest_basis.encode("utf-8")).hexdigest()
+            retrieved_count = 0
+            for src in fetched_sources:
+                if src.get("retrieved", False):
+                    retrieved_count = retrieved_count + 1
+
             prompt = (
-                f"Food safety case classifier. Return ONLY filled JSON.\n"
+                f"Food safety evidence adjudicator for a GenLayer Intelligent Contract. Return ONLY filled JSON.\n"
+                f"Prioritize authenticated retrieved source excerpts over owner-written summaries. "
+                f"Use owner summaries only as claims to compare against the sources. Never reveal private evidence.\n"
                 f"Title: {title_val}\n"
                 f"Category: {category_val} | Stage: {stage_val} | Focus: {focus_val}\n"
                 f"Question: {question_val}\n"
-                f"Temp log: {temp_val}\n"
-                f"Transport: {transport_val}\n"
-                f"Inspection: {inspection_val}\n"
-                f"Notes: {notes_text}\n\n"
-                '{"safety_status":"<clear_to_proceed|proceed_with_conditions|hold_required|high_risk|critical_risk|insufficient_evidence>",'
+                f"Owner temp log summary: {temp_val}\n"
+                f"Owner transport summary: {transport_val}\n"
+                f"Owner inspection summary: {inspection_val}\n"
+                f"Reviewer notes visible to verdict: {notes_text}\n"
+                f"Private evidence commitment hash present: {private_commitment.strip() != ''}\n"
+                f"Retrieved source excerpts:\n{evidence_text}\n\n"
+                '{"safety_status":"<clear_to_proceed|proceed_with_conditions|hold_required|recall_match_likely|recall_match_possible|no_recall_match|high_risk|critical_risk|insufficient_evidence|specialist_review_required>",'
                 '"risk_tier":"<low|medium|high|critical|unknown>",'
-                '"required_action":"<none|proceed_with_documentation|hold_for_manual_review|quarantine_batch|request_temperature_logs|request_lab_test|request_human_inspection|escalate_to_authority|provide_more_evidence>",'
+                '"required_action":"<none|proceed_with_documentation|hold_for_manual_review|quarantine_batch|quarantine_batch_and_verify_lot_code|request_temperature_logs|request_supplier_certificate|request_lab_test|request_human_inspection|escalate_to_authority|provide_more_evidence>",'
                 '"evidence_quality":"<strong|medium|weak|missing>",'
-                '"cold_chain_assessment":"<intact|minor_excursion|material_excursion|severe_excursion|not_applicable>",'
+                '"cold_chain_assessment":"<intact|minor_excursion|material_excursion|severe_excursion|unclear|not_applicable>",'
                 '"documentation_completeness":"<complete|partial|weak|missing|not_applicable>",'
-                '"inspection_signal":"<clean|minor_issue|concerning|severe|not_applicable>",'
-                '"recall_match":"not_applicable",'
+                '"inspection_signal":"<clean|minor_issue|concerning|severe|unclear|not_applicable>",'
+                '"recall_match":"<likely_match|possible_match|no_match|unclear|not_applicable>",'
                 '"confidence":<0-100>,'
-                '"short_reason":"<one sentence>"}'
+                '"short_reason":"<one sentence citing source evidence quality>"}'
             )
             raw = gl.nondet.exec_prompt(prompt, response_format="json")
             try:
@@ -784,6 +849,8 @@ class TraceContract(gl.Contract):
                 "recall_match": v["recall_match"],
                 "confidence": v["confidence"],
                 "short_reason": v["short_reason"],
+                "authenticated_source_count": retrieved_count,
+                "source_digest": source_digest,
             }, sort_keys=True)
 
         consensus_json = gl.eq_principle.prompt_comparative(
@@ -792,9 +859,14 @@ class TraceContract(gl.Contract):
         )
 
         try:
-            normalised_verdict = self._normalise_verdict_payload(consensus_json)
+            consensus_payload = json.loads(consensus_json) if isinstance(consensus_json, str) else consensus_json
+            normalised_verdict = self._normalise_verdict_payload(consensus_payload)
         except Exception:
+            consensus_payload = {}
             normalised_verdict = self._inconclusive_verdict()
+
+        authenticated_source_count = self._to_int(consensus_payload.get("authenticated_source_count", 0), 0) if isinstance(consensus_payload, dict) else 0
+        source_digest = self._limit(consensus_payload.get("source_digest", ""), 80) if isinstance(consensus_payload, dict) else ""
 
         verdict_id = self._next_verdict_id()
         now = _now()
@@ -812,6 +884,9 @@ class TraceContract(gl.Contract):
             "required_action": normalised_verdict["required_action"],
             "confidence": normalised_verdict["confidence"],
             "short_reason": normalised_verdict["short_reason"],
+            "authenticated_source_count": authenticated_source_count,
+            "source_digest": source_digest,
+            "private_evidence_commitment_present": private_commitment.strip() != "",
             "adjudicated_by": "GENLAYER_CONSENSUS",
             "created_at": now,
         }
@@ -824,6 +899,8 @@ class TraceContract(gl.Contract):
         case["status"] = new_case_status
         case["latest_verdict_id"] = verdict_id
         case["verdict_at"] = now
+        case["evidence_sources_authenticated"] = authenticated_source_count > 0
+        case["evidence_source_digest"] = source_digest
         self.cases[case_id] = self._json(case)
 
         self._update_status_index(old_case_status, new_case_status, case_id)
@@ -854,6 +931,8 @@ class TraceContract(gl.Contract):
 
         parsed = json.loads(verdict_json)
         normalised = self._normalise_verdict_payload(parsed)
+        authenticated_source_count = self._to_int(parsed.get("authenticated_source_count", 0), 0) if isinstance(parsed, dict) else 0
+        source_digest = self._limit(parsed.get("source_digest", ""), 80) if isinstance(parsed, dict) else ""
 
         verdict_id = self._next_verdict_id()
         now = _now()
@@ -871,6 +950,9 @@ class TraceContract(gl.Contract):
             "required_action": normalised["required_action"],
             "confidence": normalised["confidence"],
             "short_reason": normalised["short_reason"],
+            "authenticated_source_count": authenticated_source_count,
+            "source_digest": source_digest,
+            "private_evidence_commitment_present": case.get("private_evidence_commitment_hash", "").strip() != "",
             "adjudicated_by": "DEPLOYER_OVERRIDE",
             "created_at": now,
         }
@@ -882,6 +964,8 @@ class TraceContract(gl.Contract):
         case["status"] = new_case_status
         case["latest_verdict_id"] = verdict_id
         case["verdict_at"] = now
+        case["evidence_sources_authenticated"] = authenticated_source_count > 0
+        case["evidence_source_digest"] = source_digest
         self.cases[case_id] = self._json(case)
 
         self._update_status_index(old_case_status, new_case_status, case_id)
@@ -899,7 +983,21 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_case(self, case_id: str) -> str:
-        return self.cases.get(case_id, "{}")
+        raw = self.cases.get(case_id, "")
+        if raw == "":
+            return "{}"
+        case = self._load(raw)
+        return self._json(self._case_for_sender(case))
+
+    @gl.public.view
+    def get_case_private(self, case_id: str) -> str:
+        raw = self.cases.get(case_id, "")
+        if raw == "":
+            return "{}"
+        case = self._load(raw)
+        if case.get("owner", "").lower() != self._sender():
+            return "{}"
+        return self._json(case)
 
     @gl.public.view
     def get_public_cases(self) -> str:
@@ -926,7 +1024,12 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_cases_by_owner(self, owner: str) -> str:
-        owner_lower = owner.strip().lower()
+        # owner is kept for older clients but is not trusted for access control.
+        return self.get_my_cases()
+
+    @gl.public.view
+    def get_my_cases(self) -> str:
+        owner_lower = self._sender()
         raw_index = self.owner_case_index.get(owner_lower, "")
         if raw_index == "":
             return "[]"
@@ -969,7 +1072,16 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_case_verdict(self, case_id: str) -> str:
-        return self.verdicts.get(case_id, "{}")
+        raw = self.verdicts.get(case_id, "")
+        if raw == "":
+            return "{}"
+        case_raw = self.cases.get(case_id, "")
+        if case_raw == "":
+            return "{}"
+        case = self._load(case_raw)
+        if case.get("visibility_mode", "") == "public" or case.get("owner", "").lower() == self._sender():
+            return raw
+        return "{}"
 
     @gl.public.view
     def get_verdict_public(self, case_id: str) -> str:
