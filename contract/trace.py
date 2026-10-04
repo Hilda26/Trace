@@ -22,13 +22,15 @@ class TraceContract(gl.Contract):
     Product purpose:
     Trace lets manufacturers, distributors, inspectors, retailers, restaurants,
     and public observers submit structured Safety Cases containing batch records,
-    inspection photos, temperature logs, recall notices, PDFs, and public
-    advisories. GenLayer validators reach consensus on whether a food batch,
-    shipment, storage event, or safety claim is clear, risky, compromised,
-    unverifiable, or safe to proceed.
+    temperature logs, recall notices, PDFs, public advisories, and optional
+    image URL references. GenLayer validators reach consensus on whether a food
+    batch, shipment, storage event, or safety claim is clear, risky,
+    compromised, unverifiable, or safe to proceed based on retrieved public
+    sources and owner claims.
 
-    The contract returns an authoritative on-chain safety verdict and enforces
-    bounded canonical enums for every verdict field.
+    The contract returns an authoritative on-chain safety verdict, enforces
+    bounded canonical enums for every verdict field, and records whether public
+    sources bind to the submitted product and batch/lot.
 
     What belongs on-chain:
     - safety case registry and state machine
@@ -345,6 +347,35 @@ class TraceContract(gl.Contract):
             return v
         return "hold_for_manual_review"
 
+
+    def _normalise_binding(self, value: typing.Any) -> str:
+        v = str(value).strip().lower()
+        if v in ["specific", "partial", "missing", "conflict"]:
+            return v
+        return "missing"
+
+    def _normalise_source_bindings(self, value: typing.Any, allowed_urls: typing.List[str]) -> typing.List[typing.Any]:
+        rows: typing.List[typing.Any] = []
+        if not isinstance(value, list):
+            return rows
+        allowed: typing.List[str] = []
+        for url in allowed_urls[:6]:
+            allowed.append(str(url))
+        for item in value[:6]:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url", ""))[:500]
+            if url not in allowed:
+                continue
+            rows.append({
+                "url": url,
+                "issuer": self._limit(item.get("issuer", "unknown"), 120),
+                "publication_date": self._limit(item.get("publication_date", "unknown"), 40),
+                "mentions_product": bool(item.get("mentions_product", False)),
+                "mentions_batch": bool(item.get("mentions_batch", False)),
+            })
+        return rows
+
     def _normalise_verdict_payload(self, raw: typing.Any) -> typing.Any:
         if isinstance(raw, str):
             parsed = json.loads(raw)
@@ -476,6 +507,42 @@ class TraceContract(gl.Contract):
             return case
         return {}
 
+    def _can_view_case(self, case: typing.Any) -> bool:
+        return case.get("visibility_mode", "") == "public" or case.get("owner", "").lower() == self._sender()
+
+    def _visible_case_ids_from_index(self, raw_index: str) -> str:
+        if raw_index is None or raw_index == "":
+            return ""
+        visible: typing.List[str] = []
+        for case_id in raw_index.split("|"):
+            case_id = case_id.strip()
+            if case_id == "":
+                continue
+            raw = self.cases.get(case_id, "")
+            if raw == "":
+                continue
+            case = self._load(raw)
+            if self._can_view_case(case):
+                visible.append(case_id)
+        return "|".join(visible)
+
+    def _can_view_note(self, note: typing.Any, case: typing.Any) -> bool:
+        if case.get("owner", "").lower() == self._sender():
+            return True
+        return case.get("visibility_mode", "") == "public" and note.get("visibility", "private") == "public"
+
+    def _note_for_sender(self, note_id: str) -> typing.Any:
+        raw = self.notes.get(note_id, "")
+        if raw == "":
+            return {}
+        note = self._load(raw)
+        case_raw = self.cases.get(note.get("case_id", ""), "")
+        if case_raw == "":
+            return {}
+        case = self._load(case_raw)
+        if not self._can_view_note(note, case):
+            return {}
+        return note
     # ──────────────────────────────────────────────────────────────────────────
     # Contract status
     # ──────────────────────────────────────────────────────────────────────────
@@ -775,6 +842,8 @@ class TraceContract(gl.Contract):
             return s[:n] if s else "not provided"
 
         title_val         = _cap(case.get("title", ""), 100)
+        product_val       = _cap(case.get("product_summary", ""), 260)
+        batch_val         = _cap(case.get("batch_or_lot_reference", ""), 120)
         category_val      = case.get("food_category", "unknown")
         stage_val         = case.get("chain_stage", "unknown")
         focus_val         = case.get("review_focus", "general")
@@ -793,14 +862,14 @@ class TraceContract(gl.Contract):
                 source_record = {"url": url, "retrieved": False, "excerpt": ""}
                 try:
                     html = gl.nondet.web.render(url, mode="html")
-                    excerpt = self._limit(str(html).replace("\n", " ").replace("\r", " "), 1200)
-                    source_record = {"url": url, "retrieved": True, "excerpt": excerpt[:500]}
-                    source_text_parts.append("SOURCE " + url + ": " + excerpt)
+                    excerpt = self._limit(str(html).replace("\n", " ").replace("\r", " "), 1400)
+                    source_record = {"url": url, "retrieved": True, "excerpt": excerpt[:650]}
+                    source_text_parts.append("SOURCE_URL: " + url + "\nSOURCE_EXCERPT: " + excerpt)
                 except Exception as err:
                     source_record = {"url": url, "retrieved": False, "excerpt": "EXTERNAL_FETCH_ERROR: " + self._limit(str(err), 160)}
                 fetched_sources.append(source_record)
 
-            evidence_text = "\n".join(source_text_parts) if source_text_parts else "no public sources retrieved"
+            evidence_text = "\n\n".join(source_text_parts) if source_text_parts else "no public sources retrieved"
             digest_basis = json.dumps(fetched_sources, sort_keys=True)
             source_digest = hashlib.sha256(digest_basis.encode("utf-8")).hexdigest()
             retrieved_count = 0
@@ -810,16 +879,20 @@ class TraceContract(gl.Contract):
 
             prompt = (
                 f"Food safety evidence adjudicator for a GenLayer Intelligent Contract. Return ONLY filled JSON.\n"
-                f"Prioritize authenticated retrieved source excerpts over owner-written summaries. "
-                f"Use owner summaries only as claims to compare against the sources. Never reveal private evidence.\n"
+                f"Use retrieved source excerpts as evidence. Treat owner text as claims to verify, not proof.\n"
+                f"Do not use image URLs or private evidence commitment hashes as safety evidence; they are recorded but not adjudicated in this version.\n"
+                f"For every source, extract issuer/publisher, publication or report date if present, whether it names the submitted product, and whether it names or plausibly covers the batch/lot.\n"
+                f"Only mark evidence strong when at least one authoritative source is retrieved and product/batch binding is specific.\n"
                 f"Title: {title_val}\n"
+                f"Product claim: {product_val}\n"
+                f"Batch or lot claim: {batch_val}\n"
                 f"Category: {category_val} | Stage: {stage_val} | Focus: {focus_val}\n"
                 f"Question: {question_val}\n"
                 f"Owner temp log summary: {temp_val}\n"
                 f"Owner transport summary: {transport_val}\n"
                 f"Owner inspection summary: {inspection_val}\n"
                 f"Reviewer notes visible to verdict: {notes_text}\n"
-                f"Private evidence commitment hash present: {private_commitment.strip() != ''}\n"
+                f"Private evidence commitment hash present but excluded from verdict: {private_commitment.strip() != ''}\n"
                 f"Retrieved source excerpts:\n{evidence_text}\n\n"
                 '{"safety_status":"<clear_to_proceed|proceed_with_conditions|hold_required|recall_match_likely|recall_match_possible|no_recall_match|high_risk|critical_risk|insufficient_evidence|specialist_review_required>",'
                 '"risk_tier":"<low|medium|high|critical|unknown>",'
@@ -830,14 +903,26 @@ class TraceContract(gl.Contract):
                 '"inspection_signal":"<clean|minor_issue|concerning|severe|unclear|not_applicable>",'
                 '"recall_match":"<likely_match|possible_match|no_match|unclear|not_applicable>",'
                 '"confidence":<0-100>,'
-                '"short_reason":"<one sentence citing source evidence quality>"}'
+                '"product_binding":"<specific|partial|missing|conflict>",'
+                '"batch_binding":"<specific|partial|missing|conflict>",'
+                '"source_bindings":[{"url":"<url>","issuer":"<publisher or unknown>","publication_date":"<YYYY-MM-DD or unknown>","mentions_product":<true|false>,"mentions_batch":<true|false>}],'
+                '"image_evidence_adjudicated":false,'
+                '"private_evidence_adjudicated":false,'
+                '"excluded_evidence":"image_urls and private_evidence_commitment_hash were not used for this verdict",'
+                '"short_reason":"<one sentence citing source issuer/date and product/batch binding>"}'
             )
             raw = gl.nondet.exec_prompt(prompt, response_format="json")
             try:
                 data = json.loads(raw) if isinstance(raw, str) else raw
                 v = self._normalise_verdict_payload(data)
+                product_binding = self._normalise_binding(data.get("product_binding", "missing"))
+                batch_binding = self._normalise_binding(data.get("batch_binding", "missing"))
+                source_bindings = self._normalise_source_bindings(data.get("source_bindings", []), source_urls)
             except Exception:
                 v = self._inconclusive_verdict()
+                product_binding = "missing"
+                batch_binding = "missing"
+                source_bindings = []
             return json.dumps({
                 "safety_status": v["safety_status"],
                 "risk_tier": v["risk_tier"],
@@ -851,11 +936,17 @@ class TraceContract(gl.Contract):
                 "short_reason": v["short_reason"],
                 "authenticated_source_count": retrieved_count,
                 "source_digest": source_digest,
+                "product_binding": product_binding,
+                "batch_binding": batch_binding,
+                "source_bindings": source_bindings,
+                "image_evidence_adjudicated": False,
+                "private_evidence_adjudicated": False,
+                "excluded_evidence": "image_urls and private_evidence_commitment_hash were not used for this verdict",
             }, sort_keys=True)
 
         consensus_json = gl.eq_principle.prompt_comparative(
             evaluate_once,
-            principle="Outputs are equivalent if safety_status and risk_tier match.",
+            principle="Outputs are equivalent only if safety_status, risk_tier, product_binding, batch_binding, and source issuer/date facts materially match. Image/private evidence exclusion fields must be false in both outputs.",
         )
 
         try:
@@ -867,6 +958,9 @@ class TraceContract(gl.Contract):
 
         authenticated_source_count = self._to_int(consensus_payload.get("authenticated_source_count", 0), 0) if isinstance(consensus_payload, dict) else 0
         source_digest = self._limit(consensus_payload.get("source_digest", ""), 80) if isinstance(consensus_payload, dict) else ""
+        product_binding = self._normalise_binding(consensus_payload.get("product_binding", "missing")) if isinstance(consensus_payload, dict) else "missing"
+        batch_binding = self._normalise_binding(consensus_payload.get("batch_binding", "missing")) if isinstance(consensus_payload, dict) else "missing"
+        source_bindings = self._normalise_source_bindings(consensus_payload.get("source_bindings", []), source_urls) if isinstance(consensus_payload, dict) else []
 
         verdict_id = self._next_verdict_id()
         now = _now()
@@ -886,6 +980,12 @@ class TraceContract(gl.Contract):
             "short_reason": normalised_verdict["short_reason"],
             "authenticated_source_count": authenticated_source_count,
             "source_digest": source_digest,
+            "product_binding": product_binding,
+            "batch_binding": batch_binding,
+            "source_bindings": source_bindings,
+            "image_evidence_adjudicated": False,
+            "private_evidence_adjudicated": False,
+            "excluded_evidence": "image_urls and private_evidence_commitment_hash were not used for this verdict",
             "private_evidence_commitment_present": private_commitment.strip() != "",
             "adjudicated_by": "GENLAYER_CONSENSUS",
             "created_at": now,
@@ -920,62 +1020,8 @@ class TraceContract(gl.Contract):
 
         return self._json(verdict_record)
 
-    @gl.public.write
-    def store_safety_verdict(self, case_id: str, verdict_json: str) -> None:
-        """Deployer-only override for storing a pre-validated verdict (e.g. retry path)."""
-        self._require_not_paused()
-        self._require_deployer()
-
-        case = self._require_case_exists(case_id)
-        self._require_non_empty(verdict_json, "verdict_json")
-
-        parsed = json.loads(verdict_json)
-        normalised = self._normalise_verdict_payload(parsed)
-        authenticated_source_count = self._to_int(parsed.get("authenticated_source_count", 0), 0) if isinstance(parsed, dict) else 0
-        source_digest = self._limit(parsed.get("source_digest", ""), 80) if isinstance(parsed, dict) else ""
-
-        verdict_id = self._next_verdict_id()
-        now = _now()
-
-        verdict_record = {
-            "verdict_id": verdict_id,
-            "case_id": case_id,
-            "safety_status": normalised["safety_status"],
-            "risk_tier": normalised["risk_tier"],
-            "evidence_quality": normalised["evidence_quality"],
-            "recall_match": normalised["recall_match"],
-            "cold_chain_assessment": normalised["cold_chain_assessment"],
-            "documentation_completeness": normalised["documentation_completeness"],
-            "inspection_signal": normalised["inspection_signal"],
-            "required_action": normalised["required_action"],
-            "confidence": normalised["confidence"],
-            "short_reason": normalised["short_reason"],
-            "authenticated_source_count": authenticated_source_count,
-            "source_digest": source_digest,
-            "private_evidence_commitment_present": case.get("private_evidence_commitment_hash", "").strip() != "",
-            "adjudicated_by": "DEPLOYER_OVERRIDE",
-            "created_at": now,
-        }
-
-        self.verdicts[case_id] = self._json(verdict_record)
-
-        new_case_status = self._status_from_verdict(normalised["safety_status"])
-        old_case_status = case.get("status", "")
-        case["status"] = new_case_status
-        case["latest_verdict_id"] = verdict_id
-        case["verdict_at"] = now
-        case["evidence_sources_authenticated"] = authenticated_source_count > 0
-        case["evidence_source_digest"] = source_digest
-        self.cases[case_id] = self._json(case)
-
-        self._update_status_index(old_case_status, new_case_status, case_id)
-
-        self._record_audit(
-            case_id,
-            "DEPLOYER_VERDICT_STORED",
-            self._sender(),
-            "Deployer stored override verdict: " + normalised["safety_status"],
-        )
+    # Deployer verdict overrides were intentionally removed. All safety verdicts
+    # must be produced through GenLayer consensus over submitted evidence.
 
     # ──────────────────────────────────────────────────────────────────────────
     # Read — cases
@@ -1106,13 +1152,14 @@ class TraceContract(gl.Contract):
     @gl.public.view
     def get_wallet_activity(self, wallet_address: str) -> str:
         wallet_lower = wallet_address.strip().lower()
+        if wallet_lower != self._sender():
+            return "[]"
         raw_index = self.wallet_activity_index.get(wallet_lower, "")
         if raw_index == "":
             return "[]"
 
         result: typing.List[typing.Any] = []
         ids = raw_index.split("|")
-        # Return most recent first — reverse iteration
         for i in range(len(ids) - 1, -1, -1):
             activity_id = ids[i].strip()
             if activity_id == "":
@@ -1126,6 +1173,12 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_case_audit_log(self, case_id: str) -> str:
+        raw_case = self.cases.get(case_id, "")
+        if raw_case == "":
+            return "[]"
+        case = self._load(raw_case)
+        if case.get("owner", "").lower() != self._sender():
+            return "[]"
         raw_index = self.case_audit_index.get(case_id, "")
         if raw_index == "":
             return "[]"
@@ -1148,6 +1201,7 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_admin_monitor_stats(self) -> str:
+        self._require_deployer()
         total = 0
         if self.all_case_index != "":
             total = len([x for x in self.all_case_index.split("|") if x.strip() != ""])
@@ -1208,6 +1262,7 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_contract_summary(self) -> str:
+        self._require_deployer()
         return self._json({
             "deployer": self.deployer,
             "paused": self.paused,
@@ -1225,7 +1280,7 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_all_case_index(self) -> str:
-        return self.all_case_index
+        return self._visible_case_ids_from_index(self.all_case_index)
 
     @gl.public.view
     def get_public_case_index(self) -> str:
@@ -1233,20 +1288,55 @@ class TraceContract(gl.Contract):
 
     @gl.public.view
     def get_owner_case_index(self, owner: str) -> str:
-        return self.owner_case_index.get(owner.strip().lower(), "")
+        # owner is kept for older clients but is not trusted for access control.
+        return self.owner_case_index.get(self._sender(), "")
 
     @gl.public.view
     def get_status_case_index(self, status: str) -> str:
-        return self.status_case_index.get(status.strip().lower(), "")
+        raw = self.status_case_index.get(status.strip().lower(), "")
+        return self._visible_case_ids_from_index(raw)
 
     @gl.public.view
     def get_case_note_index(self, case_id: str) -> str:
-        return self.case_note_index.get(case_id, "")
+        raw_case = self.cases.get(case_id, "")
+        if raw_case == "":
+            return ""
+        case = self._load(raw_case)
+        raw_index = self.case_note_index.get(case_id, "")
+        if raw_index == "":
+            return ""
+        visible: typing.List[str] = []
+        for note_id in raw_index.split("|"):
+            note_id = note_id.strip()
+            if note_id == "":
+                continue
+            note = self._note_for_sender(note_id)
+            if note != {}:
+                visible.append(note_id)
+        return "|".join(visible)
 
     @gl.public.view
     def get_note(self, note_id: str) -> str:
-        return self.notes.get(note_id, "{}")
+        note = self._note_for_sender(note_id)
+        if note == {}:
+            return "{}"
+        return self._json(note)
 
     @gl.public.view
     def get_audit_entry(self, audit_id: str) -> str:
-        return self.audit_logs.get(audit_id, "{}")
+        raw = self.audit_logs.get(audit_id, "")
+        if raw == "":
+            return "{}"
+        entry = self._load(raw)
+        case_id = entry.get("case_id", "")
+        if case_id == "":
+            if self._sender() == self.deployer.lower():
+                return raw
+            return "{}"
+        case_raw = self.cases.get(case_id, "")
+        if case_raw == "":
+            return "{}"
+        case = self._load(case_raw)
+        if case.get("owner", "").lower() != self._sender():
+            return "{}"
+        return raw

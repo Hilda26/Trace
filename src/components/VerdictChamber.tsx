@@ -2,7 +2,7 @@
 
 import type { SafetyVerdict } from "@/lib/types";
 import { StatusBadge, RiskBadge, ConfidenceMeter } from "./StatusBadge";
-import { CheckCircle2, Thermometer, FileText, Eye, Zap, Package } from "lucide-react";
+import { CheckCircle2, Thermometer, FileText, Eye, Zap, Package, Link2, ShieldOff } from "lucide-react";
 
 const fieldRows = [
   { key: "evidence_quality",           label: "Evidence Quality",            icon: Eye },
@@ -64,10 +64,52 @@ export default function VerdictChamber({ verdict }: { verdict: SafetyVerdict }) 
         })}
       </div>
 
+      {(verdict.product_binding || verdict.batch_binding) && (
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          <div className="bg-white/3 rounded p-2.5 border border-white/5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Link2 size={11} className="text-[#64748B]" />
+              <span className="text-[10px] text-[#64748B] uppercase tracking-wide">Product Binding</span>
+            </div>
+            <span className="text-xs font-mono text-[#38BDF8]">{(verdict.product_binding || "missing").replace(/_/g, " ")}</span>
+          </div>
+          <div className="bg-white/3 rounded p-2.5 border border-white/5">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Link2 size={11} className="text-[#64748B]" />
+              <span className="text-[10px] text-[#64748B] uppercase tracking-wide">Batch Binding</span>
+            </div>
+            <span className="text-xs font-mono text-[#38BDF8]">{(verdict.batch_binding || "missing").replace(/_/g, " ")}</span>
+          </div>
+        </div>
+      )}
+
+      {verdict.source_bindings && verdict.source_bindings.length > 0 && (
+        <div className="border-t border-white/8 pt-3 mb-3">
+          <p className="text-xs text-[#64748B] mb-2">Source Provenance</p>
+          <div className="space-y-2">
+            {verdict.source_bindings.map((source) => (
+              <div key={source.url} className="bg-white/3 rounded p-2 border border-white/5">
+                <p className="text-xs font-mono text-[#F8FAFC] truncate">{source.issuer} · {source.publication_date}</p>
+                <p className="text-[10px] text-[#64748B]">
+                  Product: {source.mentions_product ? "named" : "not named"} · Batch: {source.mentions_batch ? "named" : "not named"}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-white/8 pt-3">
         <p className="text-xs text-[#64748B] mb-1">Verdict Reason</p>
         <p className="text-sm text-[#F8FAFC]/90 leading-relaxed">{verdict.short_reason}</p>
       </div>
+
+      {verdict.excluded_evidence && (
+        <div className="border-t border-white/8 pt-3 mt-3 flex gap-2">
+          <ShieldOff size={13} className="text-[#F59E0B] flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-[#94A3B8]">{verdict.excluded_evidence}</p>
+        </div>
+      )}
     </div>
   );
 }

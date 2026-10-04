@@ -240,13 +240,18 @@ export default function CreateCasePage() {
                 <h3 className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest">Evidence — Microscope</h3>
 
                 <UrlListInput label="Public Evidence URLs" value={form.public_evidence_urls} onChange={v => set("public_evidence_urls", v)} />
-                <UrlListInput label="Image URLs (inspection photos, labels, packaging)" value={form.image_urls} onChange={v => set("image_urls", v)} />
+                <UrlListInput label="Image URLs (recorded only; excluded from current verdict)" value={form.image_urls} onChange={v => set("image_urls", v)} />
                 <UrlListInput label="PDF Report URLs (COAs, HACCP summaries, lab reports)" value={form.pdf_report_urls} onChange={v => set("pdf_report_urls", v)} />
                 <UrlListInput label="Recall / Advisory URLs" value={form.recall_or_advisory_urls} onChange={v => set("recall_or_advisory_urls", v)} />
 
                 <Field label="Private Evidence Commitment Hash (optional)">
                   <input value={form.private_evidence_commitment_hash} onChange={e => set("private_evidence_commitment_hash", e.target.value)} className={`${inputCls} font-mono`} placeholder="keccak256 or SHA256 of private evidence bundle" />
                 </Field>
+
+                <div className="flex items-start gap-2 p-3 rounded border border-[#F59E0B]/20 bg-[#F59E0B]/5">
+                  <AlertTriangle size={13} className="text-[#F59E0B] mt-0.5" />
+                  <p className="text-xs text-[#94A3B8]">The current contract records image URLs and private evidence commitment hashes, but excludes them from safety verdict adjudication. Verdicts are bound to retrieved public/PDF/advisory sources with issuer and date information.</p>
+                </div>
 
                 <div className="flex justify-between">
                   <button type="button" onClick={() => setStep(1)} className="px-4 py-2 text-sm text-[#64748B] hover:text-[#F8FAFC]">← Back</button>

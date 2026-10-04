@@ -175,10 +175,10 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             )}
 
-            {/* Evidence Microscope */}
+            {/* Evidence Links */}
             {(evidenceLinks.length > 0 || imageLinks.length > 0 || pdfLinks.length > 0) && (
               <div className="panel p-5">
-                <h3 className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest mb-4">Evidence Microscope</h3>
+                <h3 className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest mb-4">Evidence Links</h3>
                 <div className="space-y-3">
                   {evidenceLinks.length > 0 && (
                     <div>
@@ -193,7 +193,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
                   )}
                   {imageLinks.length > 0 && (
                     <div>
-                      <p className="text-xs text-[#64748B] mb-2 flex items-center gap-1"><Image size={11} /> Image URLs</p>
+                      <p className="text-xs text-[#64748B] mb-2 flex items-center gap-1"><Image size={11} /> Image URLs - recorded only, not adjudicated</p>
                       {imageLinks.map((u, i) => (
                         <a key={i} href={u.trim()} target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-1.5 text-xs text-[#8B5CF6] hover:underline mb-1">

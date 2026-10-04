@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Trace — Food Safety Evidence Protocol",
-  description: "Submit batches, recalls, cold-chain logs, inspection photos, PDFs, and public advisories. Trace uses GenLayer consensus to classify risk, evidence quality, and required action.",
+  description: "Submit batches, recalls, cold-chain logs, PDF reports, and public advisories. Trace uses GenLayer consensus to classify risk, evidence quality, required action, and source binding.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

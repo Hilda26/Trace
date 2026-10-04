@@ -201,12 +201,12 @@ export async function getVerdictPublic(caseId: string): Promise<SafetyVerdict | 
 }
 
 export async function getWalletActivityFn(address: string): Promise<WalletActivity[]> {
-  const r = await read("get_wallet_activity", [address]) as string;
+  const r = await readAsConnectedWallet("get_wallet_activity", [address]) as string;
   try { return JSON.parse(r || "[]"); } catch { return []; }
 }
 
 export async function getAdminStats(): Promise<AdminStats | null> {
-  const r = await read("get_admin_monitor_stats", []) as string;
+  const r = await readAsConnectedWallet("get_admin_monitor_stats", []) as string;
   try { return JSON.parse(r || "{}"); } catch { return null; }
 }
 
@@ -221,11 +221,11 @@ export async function getCasesByStatus(status: string): Promise<SafetyCase[]> {
 }
 
 export async function getCaseAuditLog(caseId: string) {
-  const r = await read("get_case_audit_log", [caseId]) as string;
+  const r = await readAsConnectedWallet("get_case_audit_log", [caseId]) as string;
   try { return JSON.parse(r || "[]"); } catch { return []; }
 }
 
 export async function getContractSummary() {
-  const r = await read("get_contract_summary", []) as string;
+  const r = await readAsConnectedWallet("get_contract_summary", []) as string;
   try { return JSON.parse(r || "{}"); } catch { return {}; }
 }

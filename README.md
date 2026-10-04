@@ -5,7 +5,7 @@ Trace is a GenLayer-native food safety evidence protocol built on StudioNet. It 
 ## What It Does
 
 - **Submit Cases** — Log food safety cases with full batch details: category, chain stage, temperature logs, inspection notes, supplier info, and more
-- **Attach Evidence** — Upload URLs for images, PDFs, recall advisories, and lab reports
+- **Attach Evidence** — Upload public evidence, PDF report, recall advisory, and lab report URLs for verifier review. Image URLs and private evidence commitments are recorded as case context but are excluded from the current safety verdict.
 - **Request Verdicts** — Trigger an on-chain GenLayer consensus verdict powered by 5 independent AI validators
 - **Case Room** — Restricted workspace for case owners to add internal review notes and track verdict status
 - **Activity Feed** — Per-wallet history of all on-chain actions
@@ -26,6 +26,10 @@ Each verdict produced by the GenLayer validator network includes:
 | `inspection_signal` | Signal from inspection notes |
 | `confidence` | 0–100 confidence score |
 | `short_reason` | One-sentence explanation of the verdict |
+| `product_binding` | Whether retrieved public sources specifically, partially, or fail to bind to the submitted product |
+| `batch_binding` | Whether retrieved public sources specifically, partially, or fail to bind to the submitted batch/lot |
+| `source_bindings` | Verifiable source URL, issuer, publication date, and product/batch mention flags |
+| `excluded_evidence` | Evidence classes explicitly excluded from the verdict, currently image URLs and private evidence commitment hashes |
 
 ## Tech Stack
 

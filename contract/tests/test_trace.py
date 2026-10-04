@@ -27,7 +27,18 @@ class ContractCallerWrapper:
 
 
 @pytest.fixture
-def contract(direct_deploy, direct_vm):
+def contract(direct_deploy, direct_vm, monkeypatch):
+    import os
+
+    original_unlink = os.unlink
+
+    def unlink_ignoring_windows_stdin_lock(path):
+        try:
+            original_unlink(path)
+        except PermissionError:
+            pass
+
+    monkeypatch.setattr(os, "unlink", unlink_ignoring_windows_stdin_lock)
     return ContractCallerWrapper(direct_deploy("contract/trace.py"), direct_vm)
 
 
@@ -158,24 +169,8 @@ def test_non_owner_cannot_add_review_note(contract, accounts):
         )
 
 
-def test_private_verdict_requires_actual_sender(contract, accounts):
-    contract.submit_case(**{**VALID_CASE, "case_id": "private_verdict", "visibility_mode": "private"}, caller=accounts[0])
-    contract.store_safety_verdict("private_verdict", json.dumps({
-        "safety_status": "hold_required",
-        "risk_tier": "high",
-        "evidence_quality": "strong",
-        "recall_match": "possible_match",
-        "required_action": "quarantine_batch",
-        "confidence": 88,
-        "short_reason": "Retrieved advisory evidence conflicts with owner summary.",
-        "authenticated_source_count": 2,
-        "source_digest": "abc123",
-    }))
-
-    assert contract.get_case_verdict("private_verdict", caller=accounts[1]) == "{}"
-    owner_verdict = json.loads(contract.get_case_verdict("private_verdict", caller=accounts[0]))
-    assert owner_verdict["authenticated_source_count"] == 2
-    assert owner_verdict["source_digest"] == "abc123"
+def test_deployer_verdict_override_removed(contract):
+    assert not hasattr(contract._contract, "store_safety_verdict")
 
 
 def test_submission_records_source_and_private_commitment_metadata(contract):
@@ -190,3 +185,80 @@ def test_submission_records_source_and_private_commitment_metadata(contract):
     result = json.loads(contract.get_case_private("source_meta"))
     assert result["evidence_source_count"] == 4
     assert result["private_evidence_commitment_present"] is True
+
+
+def test_private_indices_and_note_getters_are_sender_filtered(contract, accounts):
+    contract.submit_case(**{**VALID_CASE, "case_id": "idx_private", "visibility_mode": "private"}, caller=accounts[0])
+    contract.add_review_note(
+        case_id="idx_private", note_id="idx_note", note_type="internal",
+        note_summary="Private indexed note", visibility="private",
+        caller=accounts[0],
+    )
+
+    assert "idx_private" not in contract.get_all_case_index(caller=accounts[1]).split("|")
+    assert "idx_private" not in contract.get_status_case_index("submitted", caller=accounts[1]).split("|")
+    assert contract.get_owner_case_index(str(accounts[0]), caller=accounts[1]) == ""
+    assert contract.get_case_note_index("idx_private", caller=accounts[1]) == ""
+    assert contract.get_note("idx_note", caller=accounts[1]) == "{}"
+
+    assert "idx_private" in contract.get_all_case_index(caller=accounts[0]).split("|")
+    assert "idx_private" in contract.get_status_case_index("submitted", caller=accounts[0]).split("|")
+    assert "idx_private" in contract.get_owner_case_index(str(accounts[1]), caller=accounts[0]).split("|")
+    assert contract.get_case_note_index("idx_private", caller=accounts[0]) == "idx_note"
+    assert json.loads(contract.get_note("idx_note", caller=accounts[0]))["note_id"] == "idx_note"
+
+
+def test_wallet_activity_and_audit_are_sender_filtered(contract, accounts):
+    contract.submit_case(**{**VALID_CASE, "case_id": "activity_private", "visibility_mode": "private"}, caller=accounts[0])
+
+    assert json.loads(contract.get_wallet_activity(str(accounts[0]), caller=accounts[1])) == []
+    owner_activity = json.loads(contract.get_wallet_activity(str(accounts[0]), caller=accounts[0]))
+    assert any(a["case_id"] == "activity_private" for a in owner_activity)
+
+    assert json.loads(contract.get_case_audit_log("activity_private", caller=accounts[1])) == []
+    owner_audit = json.loads(contract.get_case_audit_log("activity_private", caller=accounts[0]))
+    assert any(a["case_id"] == "activity_private" for a in owner_audit)
+    audit_id = owner_audit[0]["audit_id"]
+    assert contract.get_audit_entry(audit_id, caller=accounts[1]) == "{}"
+    assert json.loads(contract.get_audit_entry(audit_id, caller=accounts[0]))["audit_id"] == audit_id
+
+
+def test_admin_stats_and_summary_require_deployer(contract, accounts):
+    with pytest.raises(Exception, match="Only deployer"):
+        contract.get_admin_monitor_stats(caller=accounts[1])
+    with pytest.raises(Exception, match="Only deployer"):
+        contract.get_contract_summary(caller=accounts[1])
+
+    stats = json.loads(contract.get_admin_monitor_stats())
+    summary = json.loads(contract.get_contract_summary())
+    assert "total_cases" in stats
+    assert "case_counter" in summary
+
+
+def test_source_binding_normalisation_constrains_urls(contract):
+    rows = contract._contract._normalise_source_bindings([
+        {
+            "url": "https://authority.example/recall-a",
+            "issuer": "Food Safety Authority",
+            "publication_date": "2026-09-12",
+            "mentions_product": True,
+            "mentions_batch": True,
+        },
+        {
+            "url": "https://attacker.example/other",
+            "issuer": "Injected",
+            "publication_date": "2099-01-01",
+            "mentions_product": True,
+            "mentions_batch": True,
+        },
+    ], ["https://authority.example/recall-a"])
+
+    assert rows == [{
+        "url": "https://authority.example/recall-a",
+        "issuer": "Food Safety Authority",
+        "publication_date": "2026-09-12",
+        "mentions_product": True,
+        "mentions_batch": True,
+    }]
+    assert contract._contract._normalise_binding("conflict") == "conflict"
+    assert contract._contract._normalise_binding("anything else") == "missing"

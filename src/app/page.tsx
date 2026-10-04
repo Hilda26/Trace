@@ -33,7 +33,7 @@ const features = [
     icon: Search,
     color: "#8B5CF6",
     title: "Evidence Microscope",
-    desc: "Inspection photos, PDFs, supplier certificates, and hygiene reports reviewed as structured evidence packets."
+    desc: "Public URLs, PDFs, supplier certificates, and advisory pages are checked for issuer, date, product, and batch binding."
   },
   {
     icon: FileText,
@@ -70,8 +70,8 @@ export default function LandingPage() {
           </h1>
 
           <p className="text-lg text-[#94A3B8] max-w-2xl mx-auto mb-10 leading-relaxed">
-            Submit batches, recalls, cold-chain logs, inspection photos, PDFs, and public advisories.
-            Trace uses GenLayer consensus to classify risk, evidence quality, and required action.
+            Submit batches, recalls, cold-chain logs, PDFs, and public advisories.
+            Trace uses GenLayer consensus to classify risk, evidence quality, required action, and product/batch source binding.
           </p>
 
           <div className="flex flex-wrap gap-3 justify-center">
@@ -182,7 +182,7 @@ export default function LandingPage() {
             {[
               { num: "01", title: "Recall Applicability", desc: "A retailer submits batch codes and recall links. GenLayer judges whether the recall likely matches." },
               { num: "02", title: "Cold-Chain Excursion", desc: "A distributor submits temperature logs. Trace judges whether the breach is minor, material, or critical." },
-              { num: "03", title: "Shipment Hold Decision", desc: "A warehouse submits damaged packaging photos and delivery notes. Get a bounded hold or proceed verdict." },
+              { num: "03", title: "Shipment Hold Decision", desc: "A warehouse submits packaging notes and source documents. Get a bounded hold or proceed verdict from adjudicated public evidence." },
             ].map(({ num, title, desc }) => (
               <div key={num} className="panel p-5">
                 <span className="font-mono text-xs text-[#14B8A6] mb-3 block">{num}</span>

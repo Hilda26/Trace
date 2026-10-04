@@ -7,30 +7,33 @@ import type { AdminStats } from "@/lib/types";
 import { NETWORK, STATUS_CONFIG, RISK_CONFIG } from "@/lib/constants";
 import { Loader2, Eye, AlertTriangle, ExternalLink, Lock } from "lucide-react";
 
-const DEPLOYER = "0x95b37d7bf3f1b1b9e9a1ae8300c627135c095375";
-
 export default function AdminMonitorPage() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [summary, setSummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [wallet, setWallet] = useState<string | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   useEffect(() => {
-    getConnectedAddress().then(addr => {
-      setWallet(addr);
+    getConnectedAddress().then(async addr => {
       setAuthChecked(true);
-      if (addr?.toLowerCase() === DEPLOYER.toLowerCase()) {
-        Promise.all([getAdminStats(), getContractSummary()]).then(([s, c]) => {
-          setStats(s); setSummary(c); setLoading(false);
-        });
-      } else {
+      if (!addr) {
+        setAccessDenied(true);
+        setLoading(false);
+        return;
+      }
+      try {
+        const [s, c] = await Promise.all([getAdminStats(), getContractSummary()]);
+        setStats(s); setSummary(c);
+      } catch {
+        setAccessDenied(true);
+      } finally {
         setLoading(false);
       }
     });
   }, []);
 
-  if (authChecked && wallet?.toLowerCase() !== DEPLOYER.toLowerCase()) {
+  if (authChecked && accessDenied) {
     return (
       <div className="min-h-screen bg-[#05080A]">
         <Nav />

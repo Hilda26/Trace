@@ -7,7 +7,8 @@ export default function Disclaimer() {
       <div className="text-xs text-[#94A3B8] space-y-0.5">
         <p><strong className="text-[#F59E0B]">Disclaimer:</strong> Trace does not certify food as legally safe.</p>
         <p>Trace does not replace regulators, qualified inspectors, or lab testing.</p>
-        <p>Trace provides bounded evidence classification based on submitted and public information.</p>
+        <p>Trace provides bounded evidence classification based on retrieved public sources and submitted case claims.</p>
+        <p>Image URLs and private evidence commitment hashes are recorded as context, but are not adjudicated in the current verdict flow.</p>
         <p>Critical or uncertain cases must be escalated to qualified human authorities.</p>
       </div>
     </div>

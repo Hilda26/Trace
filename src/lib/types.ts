@@ -96,8 +96,22 @@ export interface SafetyVerdict {
   short_reason: string;
   authenticated_source_count?: number;
   source_digest?: string;
+  product_binding?: "specific" | "partial" | "missing" | "conflict";
+  batch_binding?: "specific" | "partial" | "missing" | "conflict";
+  source_bindings?: SourceBinding[];
+  image_evidence_adjudicated?: boolean;
+  private_evidence_adjudicated?: boolean;
+  excluded_evidence?: string;
   private_evidence_commitment_present?: boolean;
   created_at: string;
+}
+
+export interface SourceBinding {
+  url: string;
+  issuer: string;
+  publication_date: string;
+  mentions_product: boolean;
+  mentions_batch: boolean;
 }
 
 export interface ReviewNote {

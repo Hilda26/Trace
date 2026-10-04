@@ -38,7 +38,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
   }, [id]);
 
   const isOwner = c && address && c.owner.toLowerCase() === address.toLowerCase();
-  const canAccess = isOwner; // In MVP: only owner. Reviewers can be added via invite in v2.
+  const canAccess = isOwner;
 
   async function handleAddNote(e: React.FormEvent) {
     e.preventDefault();
@@ -93,7 +93,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
         <div className="w-14 h-14 rounded-full border border-[#8B5CF6]/20 flex items-center justify-center">
           <Lock size={22} className="text-[#8B5CF6]" />
         </div>
-        <p className="text-[#64748B] text-sm">Case Room is restricted to the case owner and invited reviewers.</p>
+        <p className="text-[#64748B] text-sm">Case Room is restricted to the case owner.</p>
       </div>
     </div>
   );
@@ -179,7 +179,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
           {/* Notes */}
           <div className="space-y-4">
             <div className="panel p-4">
-              <h3 className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest mb-4">Reviewer Notes</h3>
+              <h3 className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest mb-4">Owner Notes</h3>
 
               <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
                 {notes.length === 0 ? (
@@ -241,7 +241,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
                 {[
                   { label: "Temperature logs", filled: !!c.temperature_log_summary },
                   { label: "Recall / advisory URLs", filled: !!c.recall_or_advisory_urls },
-                  { label: "Image evidence", filled: !!c.image_urls },
+                  { label: "Image URLs recorded, not adjudicated", filled: !!c.image_urls },
                   { label: "PDF reports", filled: !!c.pdf_report_urls },
                   { label: "Inspection notes", filled: !!c.inspection_notes },
                   { label: "Supplier summary", filled: !!c.supplier_or_facility_summary },
