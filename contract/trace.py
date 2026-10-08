@@ -805,7 +805,7 @@ class TraceContract(gl.Contract):
         return self._json(result)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # GenLayer Judgment — request_safety_verdict, store_safety_verdict
+    # GenLayer Judgment — request_safety_verdict
     # ──────────────────────────────────────────────────────────────────────────
 
     @gl.public.write

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import Nav from "@/components/Nav";
 import Disclaimer from "@/components/Disclaimer";
 import { submitCase } from "@/lib/contract";
@@ -77,6 +78,7 @@ export default function CreateCasePage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [tx, setTx] = useState<{ txHash: string; explorerLink: string } | null>(null);
+  const [submittedCaseId, setSubmittedCaseId] = useState("");
   const [error, setError] = useState("");
   const [step, setStep] = useState(1);
 
@@ -95,7 +97,9 @@ export default function CreateCasePage() {
     }
     setSubmitting(true); setError("");
     try {
-      const result = await submitCase({ ...form, case_id: genId() });
+      const caseId = genId();
+      const result = await submitCase({ ...form, case_id: caseId });
+      setSubmittedCaseId(caseId);
       setTx(result);
     } catch (e: any) {
       setError(e.message || "Transaction failed. Is your wallet connected to StudioNet?");
@@ -147,9 +151,19 @@ export default function CreateCasePage() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <h2 className="text-xl font-bold mb-2" style={{ fontFamily: "Space Grotesk, sans-serif" }}>Case Submitted</h2>
-            <p className="text-sm text-[#64748B] mb-4">Your safety case has been submitted to StudioNet.</p>
+            <p className="text-sm text-[#64748B] mb-4">Your safety case has been submitted to StudioNet. Request a review from the case room when the transaction is available.</p>
             <TxPanel txHash={tx.txHash} explorerLink={tx.explorerLink} />
-            <button onClick={() => { setTx(null); setForm({ ...form, title: "" }); setStep(1); }}
+            {submittedCaseId && (
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                <Link href={`/room/${submittedCaseId}`} className="px-5 py-2 rounded-lg text-sm font-semibold" style={{ background: "#38BDF8", color: "#05080A" }}>
+                  Request Review
+                </Link>
+                <Link href="/dashboard" className="px-5 py-2 rounded-lg text-sm font-medium border border-white/10 text-[#64748B] hover:text-[#F8FAFC] transition-colors">
+                  Open Dashboard
+                </Link>
+              </div>
+            )}
+            <button onClick={() => { setTx(null); setSubmittedCaseId(""); setForm({ ...form, title: "" }); setStep(1); }}
               className="mt-6 px-6 py-2 rounded-lg text-sm font-medium border border-white/10 text-[#64748B] hover:text-[#F8FAFC] transition-colors">
               Submit another case
             </button>
