@@ -1,25 +1,45 @@
-# Trace Review Response
+# TRACE Review Response
 
-In response to the Signalock review, Trace was updated to harden privacy, provenance, and authorization across the contract and frontend.
+## Reviewer Feedback
 
-Private case data is now consistently protected across getters, indexes, notes, wallet activity, and audit logs. Users can only see public cases or their own private records, and private notes are filtered according to the case and note visibility rules.
+The team reported that the dashboard loaded infinitely and that there was no clear place in the UI for a case owner to request a review after submitting a case.
 
-Verdict generation was also tightened. GenLayer consensus now treats owner-submitted text as claims to verify, not proof. Safety verdicts are bound to retrieved public evidence through product and batch binding, source issuer, publication date, and per-source product/batch mention flags.
+## Fixes Implemented
 
-Image URLs and private evidence commitment hashes are no longer implied as adjudicated safety evidence. They are recorded as case context and explicitly excluded from the current safety verdict unless a future adjudication path is added.
+- Fixed the owner dashboard loading flow so wallet and private contract read failures no longer leave the page stuck in an infinite loading state.
+- Added error handling and final loading cleanup around dashboard case retrieval.
+- Added a visible `Request Review` button on dashboard case cards for submitted cases that do not yet have a verdict.
+- Added a post-submission `Request Review` call to action after a case is submitted, with a direct link into the case room.
+- Updated the case room loading flow so private reads resolve cleanly with either case data, access messaging, or a visible error.
+- Renamed the case-room action from `Request Verdict` to `Request Review` so the user flow matches the product/reviewer language.
+- Kept the case room owner-only, matching the current contract authorization rules.
 
-The deployer verdict override was removed so safety verdicts must be produced through GenLayer consensus. Admin monitor access was aligned with contract authorization and is deployer-only, read-only observability.
+## GenLayer / Contract Notes
 
-The frontend was updated to match these contract rules, including connected-wallet reads for authorized views, revised evidence wording, source provenance display, and corrected owner/admin access claims.
+- The safety verdict path remains contract-driven through `request_safety_verdict`.
+- Deployer verdict override language was removed from the contract comment surface.
+- Existing privacy and provenance tests remain in place for sender-filtered private views, note visibility, deployer-only admin reads, and source-binding normalization.
 
-Focused tests were added for private index filtering, note visibility, wallet activity filtering, audit access, admin-only reads, removal of the deployer override, and source binding normalization.
+## Verification
 
-Verification completed locally:
+The following checks passed locally:
 
-- `python -m pytest contract/tests/test_trace.py` passed with 19 tests.
-- `npx tsc --noEmit` passed.
-- A walkthrough video was added at `public/trace-walkthrough.webm`.
+```bash
+genvm-lint check contract\trace.py --json
+pytest contract\tests -v -p no:cacheprovider
+npm run build
+```
 
-Committed and pushed:
+Results:
 
-- `81f6537 Harden Trace privacy and provenance`
+- GenVM lint passed.
+- Direct contract tests passed: 19/19.
+- Production Next.js build passed.
+
+## Commit
+
+Implemented and pushed in commit:
+
+```text
+11086b6 Fix review request dashboard flow
+```
