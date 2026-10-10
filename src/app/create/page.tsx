@@ -151,15 +151,15 @@ export default function CreateCasePage() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22C55E" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
             </div>
             <h2 className="text-xl font-bold mb-2" style={{ fontFamily: "Space Grotesk, sans-serif" }}>Case Submitted</h2>
-            <p className="text-sm text-[#64748B] mb-4">Your safety case has been submitted to StudioNet. Request a review from the case room when the transaction is available.</p>
+            <p className="text-sm text-[#64748B] mb-4">Your safety case has been submitted to StudioNet. Wait for the transaction to finalize, then request review from your dashboard or case room.</p>
             <TxPanel txHash={tx.txHash} explorerLink={tx.explorerLink} />
             {submittedCaseId && (
               <div className="mt-5 flex flex-wrap justify-center gap-2">
-                <Link href={`/room/${submittedCaseId}`} className="px-5 py-2 rounded-lg text-sm font-semibold" style={{ background: "#38BDF8", color: "#05080A" }}>
-                  Request Review
-                </Link>
-                <Link href="/dashboard" className="px-5 py-2 rounded-lg text-sm font-medium border border-white/10 text-[#64748B] hover:text-[#F8FAFC] transition-colors">
+                <Link href="/dashboard" className="px-5 py-2 rounded-lg text-sm font-semibold" style={{ background: "#38BDF8", color: "#05080A" }}>
                   Open Dashboard
+                </Link>
+                <Link href={`/room/${submittedCaseId}`} className="px-5 py-2 rounded-lg text-sm font-medium border border-white/10 text-[#64748B] hover:text-[#F8FAFC] transition-colors">
+                  Open Case Room After Finalization
                 </Link>
               </div>
             )}

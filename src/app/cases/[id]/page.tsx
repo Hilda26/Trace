@@ -29,26 +29,48 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
   const [requesting, setRequesting] = useState(false);
   const [tx, setTx] = useState<{ txHash: string; explorerLink: string } | null>(null);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
+    let alive = true;
+
     async function loadCase() {
-      const addr = await getConnectedAddress();
-      const [publicCase, publicVerdict] = await Promise.all([getCase(id), getCaseVerdict(id)]);
-      let resolvedCase = publicCase;
-      let resolvedVerdict = publicVerdict;
-
-      if (addr) {
-        const [privateCase, privateVerdict] = await Promise.all([
-          getCasePrivate(id).catch(() => null),
-          getCaseVerdictPrivate(id).catch(() => null),
+      setLoading(true);
+      setLoadError("");
+      try {
+        const addr = await getConnectedAddress();
+        const [publicCase, publicVerdict] = await Promise.all([
+          getCase(id).catch(() => null),
+          getCaseVerdict(id).catch(() => null),
         ]);
-        resolvedCase = privateCase || publicCase;
-        resolvedVerdict = privateVerdict || publicVerdict;
-      }
+        let resolvedCase = publicCase;
+        let resolvedVerdict = publicVerdict;
 
-      setCase(resolvedCase); setVerdict(resolvedVerdict); setWalletAddress(addr); setLoading(false);
+        if (addr) {
+          const [privateCase, privateVerdict] = await Promise.all([
+            getCasePrivate(id).catch(() => null),
+            getCaseVerdictPrivate(id).catch(() => null),
+          ]);
+          resolvedCase = privateCase || publicCase;
+          resolvedVerdict = privateVerdict || publicVerdict;
+        }
+
+        if (!alive) return;
+        setCase(resolvedCase);
+        setVerdict(resolvedVerdict);
+        setWalletAddress(addr);
+      } catch (e: any) {
+        if (!alive) return;
+        setCase(null);
+        setVerdict(null);
+        setLoadError(e?.message || "Unable to load this case. Wait for the submit transaction to finalize, then refresh.");
+      } finally {
+        if (alive) setLoading(false);
+      }
     }
+
     loadCase();
+    return () => { alive = false; };
   }, [id]);
 
   const isOwner = c && walletAddress && c.owner.toLowerCase() === walletAddress.toLowerCase();
@@ -79,7 +101,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
     <div className="min-h-screen bg-[#05080A]">
       <Nav />
       <div className="max-w-4xl mx-auto px-6 py-20 text-center">
-        <p className="text-[#64748B]">Case not found or not public.</p>
+        <p className="text-[#64748B]">{loadError || "Case not found, not public, or not finalized yet."}</p>
       </div>
     </div>
   );

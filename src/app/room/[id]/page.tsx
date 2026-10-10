@@ -1,73 +1,104 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
+import Link from "next/link";
 import Nav from "@/components/Nav";
-import { getCasePrivate, getReviewNotes, addReviewNote, getConnectedAddress, requestSafetyVerdict, getCaseVerdictPrivate } from "@/lib/contract";
+import { getCase, getCasePrivate, getReviewNotes, addReviewNote, getConnectedAddress, requestSafetyVerdict, getCaseVerdictPrivate } from "@/lib/contract";
 import type { SafetyCase, ReviewNote, SafetyVerdict } from "@/lib/types";
 import VerdictChamber from "@/components/VerdictChamber";
 import { TxPanel } from "@/components/ExplorerLink";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Loader2, Lock, Send } from "lucide-react";
+import { Loader2, Lock, Send, Clock3 } from "lucide-react";
+
+type RoomState = "loading" | "connect" | "pending" | "restricted" | "ready";
+
+function readableLoadError(e: any): string {
+  const raw = String(e?.shortMessage || e?.message || "");
+  if (!raw) return "This case is not available yet. Wait for the submit transaction to finalize, then refresh or open it from your dashboard.";
+  if (raw.includes("Missing or invalid parameters") || raw.includes("execution failed")) {
+    return "This case is not available yet. The submit transaction may still be finalizing. Wait a moment, then refresh or open it from your dashboard.";
+  }
+  return raw;
+}
 
 export default function CaseRoomPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [c, setCase] = useState<SafetyCase | null>(null);
   const [notes, setNotes] = useState<ReviewNote[]>([]);
   const [address, setAddress] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [roomState, setRoomState] = useState<RoomState>("loading");
   const [noteSummary, setNoteSummary] = useState("");
   const [noteType, setNoteType] = useState("internal");
   const [noteVisibility, setNoteVisibility] = useState("private");
   const [submitting, setSubmitting] = useState(false);
   const [tx, setTx] = useState<{ txHash: string; explorerLink: string } | null>(null);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [requestingVerdict, setRequestingVerdict] = useState(false);
   const [verdict, setVerdict] = useState<SafetyVerdict | null>(null);
 
-  useEffect(() => {
-    let alive = true;
+  async function loadRoom() {
+    setRoomState("loading");
+    setError("");
+    setWarning("");
+    setCase(null);
+    setNotes([]);
+    setVerdict(null);
 
-    async function loadRoom() {
-      setLoading(true);
-      setError("");
-      try {
-        const addr = await getConnectedAddress();
-        if (!alive) return;
-        setAddress(addr);
-
-        if (!addr) {
-          setCase(null);
-          setNotes([]);
-          setVerdict(null);
-          return;
-        }
-
-        const [loadedCase, loadedNotes, loadedVerdict] = await Promise.all([
-          getCasePrivate(id),
-          getReviewNotes(id, addr),
-          getCaseVerdictPrivate(id),
-        ]);
-        if (!alive) return;
-        setCase(loadedCase);
-        setNotes(loadedNotes);
-        setVerdict(loadedVerdict);
-      } catch (e: any) {
-        if (!alive) return;
-        setCase(null);
-        setNotes([]);
-        setVerdict(null);
-        setError(e?.message || "Unable to load this case room. Please reconnect your wallet and try again.");
-      } finally {
-        if (alive) setLoading(false);
-      }
+    const addr = await getConnectedAddress();
+    setAddress(addr);
+    if (!addr) {
+      setRoomState("connect");
+      return;
     }
 
-    loadRoom();
+    let privateCase: SafetyCase | null = null;
+    try {
+      privateCase = await getCasePrivate(id);
+    } catch (e: any) {
+      setError(readableLoadError(e));
+      setRoomState("pending");
+      return;
+    }
+
+    if (!privateCase) {
+      const publicCase = await getCase(id).catch(() => null);
+      if (publicCase && publicCase.owner && publicCase.owner.toLowerCase() !== addr.toLowerCase()) {
+        setCase(publicCase);
+        setRoomState("restricted");
+        return;
+      }
+
+      setError("This case is not available yet. Wait for the submit transaction to finalize, then refresh or open it from your dashboard.");
+      setRoomState("pending");
+      return;
+    }
+
+    setCase(privateCase);
+    setRoomState("ready");
+
+    const [notesResult, verdictResult] = await Promise.allSettled([
+      getReviewNotes(id, addr),
+      getCaseVerdictPrivate(id),
+    ]);
+
+    if (notesResult.status === "fulfilled") setNotes(notesResult.value);
+    else setWarning("Case loaded, but notes are temporarily unavailable. Refresh after the transaction finalizes.");
+
+    if (verdictResult.status === "fulfilled") setVerdict(verdictResult.value);
+  }
+
+  useEffect(() => {
+    let alive = true;
+    loadRoom().catch((e: any) => {
+      if (!alive) return;
+      setError(readableLoadError(e));
+      setRoomState("pending");
+    });
     return () => { alive = false; };
   }, [id]);
 
   const isOwner = c && address && c.owner.toLowerCase() === address.toLowerCase();
-  const canAccess = isOwner;
 
   async function handleAddNote(e: React.FormEvent) {
     e.preventDefault();
@@ -115,7 +146,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
     }
   }
 
-  if (loading) return (
+  if (roomState === "loading") return (
     <div className="min-h-screen bg-[#05080A]">
       <Nav />
       <div className="flex items-center justify-center py-32">
@@ -124,27 +155,51 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
     </div>
   );
 
-  if (!address || !canAccess) return (
+  if (roomState === "connect") return (
+    <div className="min-h-screen bg-[#05080A]">
+      <Nav />
+      <div className="flex flex-col items-center justify-center py-32 gap-4 px-6 text-center">
+        <div className="w-14 h-14 rounded-full border border-white/10 flex items-center justify-center">
+          <Lock size={22} className="text-[#64748B]" />
+        </div>
+        <p className="text-[#64748B] text-sm">Connect the wallet that submitted this case to open the Case Room.</p>
+      </div>
+    </div>
+  );
+
+  if (roomState === "pending") return (
+    <div className="min-h-screen bg-[#05080A]">
+      <Nav />
+      <div className="flex flex-col items-center justify-center py-32 gap-4 px-6 text-center">
+        <div className="w-14 h-14 rounded-full border border-[#38BDF8]/20 flex items-center justify-center">
+          <Clock3 size={22} className="text-[#38BDF8]" />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold mb-2" style={{ fontFamily: "Space Grotesk, sans-serif" }}>Case Not Ready Yet</h1>
+          <p className="text-[#64748B] text-sm max-w-lg">{error || "The submit transaction may still be finalizing. Wait a moment, then refresh or open the case from your dashboard."}</p>
+        </div>
+        <div className="flex flex-wrap justify-center gap-2">
+          <button onClick={loadRoom} className="px-4 py-2 rounded-lg text-sm font-semibold" style={{ background: "#38BDF8", color: "#05080A" }}>Refresh</button>
+          <Link href="/dashboard" className="px-4 py-2 rounded-lg text-sm font-medium border border-white/10 text-[#64748B] hover:text-[#F8FAFC] transition-colors">Open Dashboard</Link>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (roomState === "restricted") return (
     <div className="min-h-screen bg-[#05080A]">
       <Nav />
       <div className="flex flex-col items-center justify-center py-32 gap-4 px-6 text-center">
         <div className="w-14 h-14 rounded-full border border-[#8B5CF6]/20 flex items-center justify-center">
           <Lock size={22} className="text-[#8B5CF6]" />
         </div>
-        <p className="text-[#64748B] text-sm">Case Room is restricted to the case owner.</p>
-        {error && <p className="text-xs text-[#EF4444] max-w-md">{error}</p>}
+        <p className="text-[#64748B] text-sm">Case Room is restricted to the wallet that submitted this case.</p>
+        <p className="text-xs text-[#64748B] max-w-md">Connected wallet: {address || "not connected"}</p>
       </div>
     </div>
   );
 
-  if (!c) return (
-    <div className="min-h-screen bg-[#05080A]">
-      <Nav />
-      <div className="text-center py-20">
-        <p className="text-[#64748B]">Case not found.</p>
-      </div>
-    </div>
-  );
+  if (!c) return null;
 
   const visColor = (v: string) => v === "private" ? "#EF4444" : "#22C55E";
 
@@ -155,7 +210,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
       <div className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center gap-2 mb-2">
           <span className="w-1.5 h-1.5 rounded-full bg-[#8B5CF6] pulse-dot" />
-          <span className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest">Case Room - Restricted</span>
+          <span className="text-xs font-mono text-[#8B5CF6] uppercase tracking-widest">Case Room - Owner Only</span>
         </div>
         <div className="flex items-start justify-between gap-4 mb-8">
           <div>
@@ -173,6 +228,9 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
             </button>
           )}
         </div>
+
+        {warning && <p className="text-xs text-[#F59E0B] mb-4">{warning}</p>}
+        {error && roomState === "ready" && <p className="text-xs text-[#EF4444] mb-4">{error}</p>}
 
         <div className="grid lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
@@ -255,7 +313,7 @@ export default function CaseRoomPage({ params }: { params: Promise<{ id: string 
                 </button>
               </form>
 
-              {error && <p className="text-xs text-[#EF4444] mt-2">{error}</p>}
+              {error && roomState === "ready" && <p className="text-xs text-[#EF4444] mt-2">{error}</p>}
               {tx && <TxPanel txHash={tx.txHash} explorerLink={tx.explorerLink} />}
             </div>
 
